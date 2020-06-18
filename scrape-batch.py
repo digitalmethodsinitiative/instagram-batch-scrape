@@ -14,6 +14,8 @@ import config
 
 cli = argparse.ArgumentParser()
 cli.add_argument("--batchfile", "-b", required=True, help="File containing entities to scrape, one per line")
+cli.add_argument("--output", "-o",
+				 help="Location to create result files in. If left empty, the working directory is used.")
 args = cli.parse_args()
 
 batch_file = pathlib.Path(args.batchfile).resolve()
@@ -21,7 +23,13 @@ if not batch_file.exists():
 	print("Batch file ('%s') not found." % str(batch_file))
 	sys.exit(1)
 
-instagram = instaloader.Instaloader()
+output_path = pathlib.Path(args.output).resolve() if args.output else pathlib.Path(__file__, "..").resolve()
+if not output_path.exists() or not output_path.is_dir():
+	print("Given output path (%s) is not a valid directory." % str(output_path))
+	sys.exit(1)
+
+instagram = instaloader.Instaloader(download_comments=False, download_pictures=False, download_videos=False,
+									download_video_thumbnails=False, save_metadata=False)
 try:
 	instagram.login(config.USERNAME, config.PASSWORD)
 except (instaloader.BadCredentialsException, instaloader.InvalidArgumentException):
@@ -40,18 +48,17 @@ with batch_file.open() as input:
 			continue
 		usernames.add(username.strip())
 
-
 # initialise result variables and files
 # user and post data is written to a CSV file directly, followers/followees are
 # kept in memory until the end to write one big graph file
-user_file = open("accounts.csv", "w")
+user_file = output_path.joinpath("accounts.csv").open("w")
 user_writer = csv.DictWriter(user_file, fieldnames=["username", "url",
 													"url_profile_pic", "full_name", "userid", "is_verified",
 													"has_viewable_story", "has_public_story",
 													"biography", "media_count", "igtv_count", "followers", "followees"])
 user_writer.writeheader()
 
-post_file = open("posts.csv", "w")
+post_file = output_path.joinpath("posts.csv").open("w")
 post_writer = csv.DictWriter(post_file, fieldnames=["shortcode", "username", "date_utc", "url_thumbnail", "url_media",
 													"is_video", "is_sponsored", "hashtags", "mentions", "caption",
 													"video_view_count", "video_length", "likes",
@@ -60,6 +67,7 @@ post_writer.writeheader()
 
 follower_graph = []
 follow_usernames = set()
+user_ids = {}
 
 # start scraping
 print("Scraping %i usernames, %i posts per user." % (len(usernames), config.POSTS_PER_USERNAME))
@@ -72,17 +80,21 @@ for username in usernames:
 		print("Profile %s does not exist, skipping." % username)
 		continue
 
+	user_ids[username] = profile.userid
+
 	for follower in profile.get_followers():
 		pair = [follower.username, username]
 		follower_graph.append(pair)
 		follow_usernames.add(follower.username)
 		follow_usernames.add(username)
+		user_ids[follower.username] = follower.userid
 
 	for followee in profile.get_followees():
 		pair = [username, followee.username]
 		follower_graph.append(pair)
 		follow_usernames.add(followee.username)
 		follow_usernames.add(username)
+		user_ids[followee.username] = followee.userid
 
 	profile_info = {
 		"username": username,
@@ -102,7 +114,7 @@ for username in usernames:
 
 	user_writer.writerow(profile_info)
 
-	processed = 0
+	processed = 1
 	for post in profile.get_posts():
 		if processed > config.POSTS_PER_USERNAME:
 			break
@@ -139,10 +151,10 @@ user_file.close()
 post_file.close()
 
 print("Done scraping. Writing follower/followee graph.")
-with open("follow.gdf", "w") as output:
-	output.write("nodedef>name VARCHAR\n")
+with output_path.joinpath("follower-network.gdf").open("w") as output:
+	output.write("nodedef>name VARCHAR,userid VARCHAR\n")
 	for username in follow_usernames:
-		output.write("%s\n" % username)
+		output.write("%s,%s\n" % (username, user_ids[username]))
 
 	output.write("edgedef>from VARCHAR,to VARCHAR,directed BOOLEAN\n")
 	for pair in follower_graph:
