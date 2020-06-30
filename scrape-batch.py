@@ -3,6 +3,7 @@ import argparse
 import pathlib
 import sys
 import csv
+import time
 
 config_path = pathlib.Path(__file__, "..", "config.py").resolve()
 if not config_path.exists():
@@ -16,6 +17,8 @@ cli = argparse.ArgumentParser()
 cli.add_argument("--batchfile", "-b", required=True, help="File containing entities to scrape, one per line")
 cli.add_argument("--output", "-o",
 				 help="Location to create result files in. If left empty, the working directory is used.")
+cli.add_argument("--timestamp", "-t",
+				 help="Appends a timestamp to the resulting filenames. Useful for scheduled scraping.")
 args = cli.parse_args()
 
 batch_file = pathlib.Path(args.batchfile).resolve()
@@ -51,14 +54,21 @@ with batch_file.open() as input:
 # initialise result variables and files
 # user and post data is written to a CSV file directly, followers/followees are
 # kept in memory until the end to write one big graph file
-user_file = output_path.joinpath("accounts.csv").open("w")
+
+
+if args.timestamp:
+	timestr = time.strftime("%Y%m%d%H%M%S")+"_"
+else:
+	timestr = ""
+
+user_file = output_path.joinpath(timestr+"accounts.csv").open("w")
 user_writer = csv.DictWriter(user_file, fieldnames=["username", "url",
 													"url_profile_pic", "full_name", "userid", "is_verified",
 													"has_viewable_story", "has_public_story",
 													"biography", "media_count", "igtv_count", "followers", "followees"])
 user_writer.writeheader()
 
-post_file = output_path.joinpath("posts.csv").open("w")
+post_file = output_path.joinpath(timestr+"posts.csv").open("w")
 post_writer = csv.DictWriter(post_file, fieldnames=["shortcode", "username", "date_utc", "url_thumbnail", "url_media",
 													"is_video", "is_sponsored", "hashtags", "mentions", "caption",
 													"video_view_count", "video_length", "likes",
@@ -151,7 +161,7 @@ user_file.close()
 post_file.close()
 
 print("Done scraping. Writing follower/followee graph.")
-with output_path.joinpath("follower-network.gdf").open("w") as output:
+with output_path.joinpath(timestr+"follower-network.gdf").open("w") as output:
 	output.write("nodedef>name VARCHAR,userid VARCHAR\n")
 	for username in follow_usernames:
 		output.write("%s,%s\n" % (username, user_ids[username]))
